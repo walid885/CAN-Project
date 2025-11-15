@@ -1,6 +1,5 @@
-# stop_all.sh (in CAN-Project/)
+# stop_all.sh
 #!/bin/bash
-
 pkill -f stm32_can_simulator.py
-docker-compose down
-echo "All services stopped"
+docker compose down
+echo "Stopped"

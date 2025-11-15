@@ -17,7 +17,7 @@ class CANFrame:
     node_id: int
 
 class STM32CANSimulator:
-    def __init__(self, node_id: int, mqtt_broker: str = "localhost", mqtt_port: int = 1883):
+    def __init__(self, node_id: int, mqtt_broker: str = "localhost", mqtt_port: int = 1885):
         self.node_id = node_id
         self.mqtt_broker = mqtt_broker
         self.mqtt_port = mqtt_port

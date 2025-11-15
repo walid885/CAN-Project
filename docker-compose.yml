@@ -6,8 +6,8 @@ services:
     image: eclipse-mosquitto:2
     container_name: can_mosquitto
     ports:
-      - "1883:1883"
-      - "9001:9001"
+      - "1884:1883"  # Changed from 1883
+      - "9002:9001"  # Changed from 9001
     volumes:
       - ./mosquitto/config:/mosquitto/config
       - ./mosquitto/data:/mosquitto/data

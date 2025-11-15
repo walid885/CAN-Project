@@ -152,3 +152,16 @@ MIT
 
 # Make executable
 chmod +x start_all.sh stop_all.sh
+
+
+
+# Fix Docker installation
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+
+# Logout and login again, then:
+docker --version
+docker-compose --version

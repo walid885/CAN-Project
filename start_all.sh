@@ -1,9 +1,9 @@
-# start_all.sh (in CAN-Project/)
+# start_all.sh
 #!/bin/bash
 set -e
 
 echo "Starting Docker services..."
-docker-compose up -d
+docker compose up -d
 
 echo "Waiting for services..."
 sleep 15
@@ -18,5 +18,5 @@ echo "Node 1: PID $PID1"
 echo "Node 2: PID $PID2"
 echo "Press Ctrl+C to stop"
 
-trap "kill $PID1 $PID2 2>/dev/null; docker-compose down" EXIT
+trap "kill $PID1 $PID2 2>/dev/null; docker compose down" EXIT
 wait
