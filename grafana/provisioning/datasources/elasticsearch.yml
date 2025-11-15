@@ -1,0 +1,16 @@
+# grafana/provisioning/datasources/elasticsearch.yml
+apiVersion: 1
+
+datasources:
+  - name: Elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    database: can-frames
+    jsonData:
+      timeField: timestamp
+      esVersion: 8.0.0
+      interval: Daily
+      logMessageField: message
+      logLevelField: level
+    editable: true

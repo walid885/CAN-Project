@@ -147,3 +147,8 @@ docker-compose restart
 ## License
 
 MIT
+
+
+
+# Make executable
+chmod +x start_all.sh stop_all.sh
