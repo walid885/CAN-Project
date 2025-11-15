@@ -209,19 +209,20 @@ export default function App() {
       }}>
         <StatCard title="Total Frames" value={frames.length} color="#3b82f6" icon="📊" />
         <StatCard 
-          title="Node 1" 
-          value={stats.by_node.buckets?.find(b => b.key === 1)?.doc_count || 0}
-          color="#8b5cf6"
-          icon="🔵"
-          pulse
-        />
-        <StatCard 
-          title="Node 2" 
-          value={stats.by_node.buckets?.find(b => b.key === 2)?.doc_count || 0}
-          color="#ec4899"
-          icon="🟣"
-          pulse
-        />
+  title="Node 1" 
+  value={stats?.by_node?.buckets?.find(b => b.key === 1)?.doc_count || 0}
+  color="#8b5cf6"
+  icon="🔵"
+  pulse
+/>
+
+<StatCard 
+  title="Node 2" 
+  value={stats?.by_node?.buckets?.find(b => b.key === 2)?.doc_count || 0}
+  color="#ec4899"
+  icon="🟣"
+  pulse
+/>
         <StatCard title="Frame Rate" value={`${frameRate} Hz`} color="#f59e0b" icon="⚡" />
       </div>
 
@@ -298,8 +299,8 @@ export default function App() {
         <div style={cardStyle}>
           <h3 style={titleStyle}>CAN ID Frequency</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={stats.by_can_id.buckets || []}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <BarChart data={stats?.by_can_id?.buckets || []}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="key" stroke="#64748b" />
               <YAxis stroke="#64748b" />
               <Tooltip contentStyle={{ background: 'white', border: '1px solid #e2e8f0' }} />

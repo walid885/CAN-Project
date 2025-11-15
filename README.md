@@ -1,27 +1,35 @@
-# CAN Bus Simulator System
+# CAN Bus Simulator & Monitor
 
-Real-time CAN bus monitoring with MQTT, Elasticsearch, and Grafana.
+Real-time CAN bus simulation and monitoring system with MQTT, Elasticsearch, and React visualization.
 
 ## Architecture
 ```
-STM32 Nodes (Python) → MQTT (Mosquitto) → Backend (Node.js) → Frontend (React)
-                              ↓
-                        Elasticsearch → Grafana
+STM32 Nodes (Python) → MQTT Broker (Mosquitto) → Backend (Node.js) → Frontend (React)
+                                ↓
+                         Elasticsearch → Grafana
 ```
 
 ## Components
 
-- **STM32 Simulator**: Python script emulating 2 CAN nodes
-- **MQTT Broker**: Mosquitto for message routing
-- **Backend**: Node.js server with WebSocket support
-- **Frontend**: React dashboard with live charts
-- **Database**: Elasticsearch for time-series storage
-- **Visualization**: Grafana for advanced analytics
+- **STM32 Simulator**: Python scripts simulating 2 CAN nodes with realistic automotive signals
+- **MQTT Broker**: Mosquitto for message routing (port 1884)
+- **Backend**: Node.js/Express with WebSocket support (port 5000)
+- **Frontend**: React dashboard with live charts (port 5173)
+- **Database**: Elasticsearch for time-series storage (port 9200)
+- **Visualization**: Grafana for analytics (port 3001)
+
+## Signals Monitored
+
+- Engine Speed (0x100): 800-6000 RPM
+- Vehicle Speed (0x200): 0-180 km/h
+- Engine Temperature (0x300): 60-120°C
+- Fuel Level (0x400): 0-100%
+- Battery Voltage (0x500): 12-14.5V
 
 ## Prerequisites
 ```bash
-docker
-docker-compose
+docker >= 20.10
+docker-compose >= 1.29
 node.js >= 18
 python >= 3.8
 ```
@@ -29,49 +37,61 @@ python >= 3.8
 ## Installation
 ```bash
 git clone <repo>
-cd can-simulator
-chmod +x run.sh
+cd CAN-Project
 pip install paho-mqtt
+cd backend && npm install && cd ..
+cd frontend && npm install && cd ..
+chmod +x launch.sh
 ```
 
 ## Quick Start
 ```bash
-# Start all services
-docker-compose up -d
+./launch.sh
+```
 
-# Install dependencies
-cd backend && npm install && cd ..
-cd frontend && npm install && cd ..
+Access:
+- Frontend: http://localhost:5173
+- Grafana: http://localhost:3001 (admin/admin)
+- Elasticsearch: http://localhost:9200
+- Backend API: http://localhost:5000
 
-# Run simulators
-python3 stm32_can_simulator.py 1 &
-python3 stm32_can_simulator.py 2 &
+## Manual Start
+```bash
+# Start Docker services
+docker compose up -d
+
+# Start simulators
+python3 stm32_can_simulator.py 1 localhost 1884 1 &
+python3 stm32_can_simulator.py 2 localhost 1884 1 &
 
 # Start backend
-cd backend && node server.js &
+cd backend && npm start &
 
 # Start frontend
 cd frontend && npm run dev
 ```
 
-## Ports
+## Features
 
-- Frontend: http://localhost:5173
-- Backend: http://localhost:5000
-- Grafana: http://localhost:3000 (admin/admin)
-- Elasticsearch: http://localhost:9200
-- MQTT: tcp://localhost:1883
+### Frontend
+- Real-time signal visualization with selectable traces
+- Custom CAN frame injection
+- Frame filtering by node/CAN ID
+- CSV export
+- Live statistics dashboard
 
-## API Endpoints
+### Backend API
 ```
-GET  /api/frames?from=now-1h&size=1000
+GET  /api/frames?from=now-1h&size=1000&node_id=1&can_id=0x100
 GET  /api/stats
-WS   /socket.io  (real-time frames)
+POST /api/simulate
+DELETE /api/frames
+GET  /health
 ```
 
-## MQTT Topics
+### MQTT Topics
 ```
-can/frames  - CAN frame publishing
+can/frames - CAN frame publishing
 ```
 
 ## CAN Frame Format
@@ -79,66 +99,87 @@ can/frames  - CAN frame publishing
 {
   "node_id": 1,
   "can_id": "0x100",
-  "data": [0xAA, 0xBB, 0xCC],
-  "dlc": 3,
-  "timestamp": 1699876543.123
+  "data": [12, 192, 0, 0, 0, 0, 0, 0],
+  "dlc": 8,
+  "timestamp": 1699876543.123,
+  "date": "16/11/2024"
 }
 ```
 
+## Configuration
+
+### Simulator Frequency
+```bash
+python3 stm32_can_simulator.py <node_id> <broker> <port> <frequency>
+# Example: 1 Hz = all 5 signals per second
+```
+
+### Ports
+Edit `docker-compose.yml` to change:
+- MQTT: 1884 → 1883
+- Grafana: 3001 → 3000
+- Backend: 5000
+
 ## Grafana Setup
 
-1. Access http://localhost:3000
-2. Add Elasticsearch datasource: http://elasticsearch:9200
-3. Create dashboard with index pattern: `can-frames`
-4. Add panels for CAN ID distribution, node activity, data analysis
-
-## Development
-```bash
-# Run single node
-python3 stm32_can_simulator.py <node_id>
-
-# Backend dev mode
-cd backend && nodemon server.js
-
-# Frontend dev mode
-cd frontend && npm run dev
-
-# View logs
-docker-compose logs -f
-```
-
-## Customization
-
-### Modify CAN IDs
-Edit `stm32_can_simulator.py:24`:
-```python
-can_id = random.choice([0x100, 0x200, 0x300, 0x400])
-```
-
-### Change frame frequency
-```python
-simulator.run(frequency=10)  # 10 Hz
-```
-
-### Add CAN filters
-Edit `backend/server.js` MQTT handler
+1. Login: http://localhost:3001
+2. Add datasource: Elasticsearch at http://elasticsearch:9200
+3. Index pattern: `can-frames`
+4. Create panels for signal analysis
 
 ## Troubleshooting
 ```bash
+# Check services
+docker ps
+curl http://localhost:9200/_cluster/health
+curl http://localhost:5000/health
+
+# View logs
+docker logs can_mosquitto
+docker logs can_elasticsearch
+docker logs can_backend
+
 # Reset Elasticsearch
 curl -X DELETE http://localhost:9200/can-frames
 
-# Check MQTT
-mosquitto_sub -h localhost -t "can/#" -v
+# Stop all
+docker compose down
+pkill -f stm32_can_simulator.py
+```
 
-# Restart services
-docker-compose restart
+## Project Structure
+```
+CAN-Project/
+├── docker-compose.yml
+├── launch.sh
+├── start_all.sh
+├── stop_all.sh
+├── stm32_can_simulator.py
+├── requirements.txt
+├── backend/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── server.js
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── index.html
+│   └── src/
+│       ├── main.jsx
+│       └── App.jsx
+├── mosquitto/
+│   └── config/
+│       └── mosquitto.conf
+└── grafana/
+    └── provisioning/
+        └── datasources/
+            └── elasticsearch.yml
 ```
 
 ## Stack
 
 - Python 3.8+ (paho-mqtt)
-- Node.js 18+ (express, mqtt, socket.io)
+- Node.js 18+ (express, mqtt, socket.io, @elastic/elasticsearch)
 - React 18 (recharts, socket.io-client)
 - Elasticsearch 8.11
 - Grafana Latest
@@ -146,22 +187,3 @@ docker-compose restart
 
 ## License
 
-MIT
-
-
-
-# Make executable
-chmod +x start_all.sh stop_all.sh
-
-
-
-# Fix Docker installation
-sudo apt-get update
-sudo apt-get install -y docker.io docker-compose
-sudo systemctl start docker
-sudo systemctl enable docker
-sudo usermod -aG docker $USER
-
-# Logout and login again, then:
-docker --version
-docker-compose --version
