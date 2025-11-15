@@ -54,14 +54,33 @@ class STM32CANSimulator:
             print(f"[Node {self.node_id}] Error: {e}")
             raise
         
-    def generate_can_frame(self) -> CANFrame:
+    def generate_realistic_frame(self) -> CANFrame:
         can_id = random.choice([0x100, 0x200, 0x300, 0x400, 0x500])
-        dlc = random.randint(1, 8)
-        data = [random.randint(0, 255) for _ in range(dlc)]
+        
+        if can_id == 0x100:  # Engine Speed
+            rpm = random.randint(800, 6000)
+            data = [(rpm >> 8) & 0xFF, rpm & 0xFF] + [0]*6
+            dlc = 8
+        elif can_id == 0x200:  # Vehicle Speed
+            speed = random.randint(0, 180)
+            data = [speed, 0, 0, 0, 0, 0, 0, 0]
+            dlc = 8
+        elif can_id == 0x300:  # Engine Temp
+            temp = random.randint(60, 120)
+            data = [temp + 40, 0, 0, 0, 0, 0, 0, 0]
+            dlc = 8
+        elif can_id == 0x400:  # Fuel Level
+            fuel = random.randint(20, 255)
+            data = [fuel, 0, 0, 0, 0, 0, 0, 0]
+            dlc = 8
+        else:  # Battery Voltage
+            voltage = random.randint(120, 145)
+            data = [voltage, 0, 0, 0, 0, 0, 0, 0]
+            dlc = 8
         
         return CANFrame(
             can_id=can_id,
-            data=data,
+            data=data[:dlc],
             dlc=dlc,
             timestamp=time.time(),
             node_id=self.node_id
@@ -75,33 +94,35 @@ class STM32CANSimulator:
             "dlc": frame.dlc,
             "timestamp": frame.timestamp
         }
-        self.client.publish("can/frames", json.dumps(payload), qos=1)
+        self.client.publish("can/frames", json.dumps(payload), qos=0)
         
     def run(self, frequency: float = 10):
         self.running = True
         frame_count = 0
+        last_print = time.time()
         
-        print(f"[Node {self.node_id}] Running at {frequency} Hz")
+        print(f"[Node {self.node_id}] Starting at {frequency} Hz")
         
         while self.running:
-            if self.connected:
-                frame = self.generate_can_frame()
-                self.publish_frame(frame)
-                frame_count += 1
-                
-                if frame_count % 100 == 0:
-                    print(f"[Node {self.node_id}] {frame_count} frames")
-            else:
-                print(f"[Node {self.node_id}] Waiting...")
+            if not self.connected:
+                print(f"[Node {self.node_id}] Reconnecting...")
                 time.sleep(1)
                 continue
+            
+            frame = self.generate_realistic_frame()
+            self.publish_frame(frame)
+            frame_count += 1
+            
+            if time.time() - last_print >= 10:
+                print(f"[Node {self.node_id}] {frame_count} frames")
+                last_print = time.time()
                 
             time.sleep(1.0 / frequency)
             
     def stop(self):
         print(f"[Node {self.node_id}] Stopping...")
         self.running = False
-        time.sleep(0.5)
+        time.sleep(0.2)
         self.client.loop_stop()
         self.client.disconnect()
 
