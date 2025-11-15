@@ -18,10 +18,11 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-const MQTT_BROKER = process.env.MQTT_BROKER || 'mosquitto';
-const ES_HOST = process.env.ES_HOST || 'elasticsearch:9200';
+const MQTT_BROKER = process.env.MQTT_BROKER || 'localhost';
+const MQTT_PORT = process.env.MQTT_PORT || 1884;
+const ES_HOST = process.env.ES_HOST || 'localhost:9200';
 
-const mqttClient = mqtt.connect(`mqtt://${MQTT_BROKER}:1883`);
+const mqttClient = mqtt.connect(`mqtt://${MQTT_BROKER}:${MQTT_PORT}`);
 const esClient = new Client({ node: `http://${ES_HOST}` });
 
 const INDEX_NAME = 'can-frames';
