@@ -19,11 +19,22 @@ app.use(cors());
 app.use(express.json());
 
 const MQTT_BROKER = process.env.MQTT_BROKER || 'localhost';
-const MQTT_PORT = process.env.MQTT_PORT || 1884;
-const ES_HOST = process.env.ES_HOST || 'localhost:9200';
+const MQTT_PORT = process.env.MQTT_PORT || 1883; 
+const ES_HOST = process.env.ES_HOST || '';
+
+// Only initialize ES if host is provided
+let esClient = null;
+let esEnabled = false;
+
+if (ES_HOST && ES_HOST !== 'false' && ES_HOST !== '') {
+  esClient = new Client({ node: `http://${ES_HOST}` });
+  esEnabled = true;
+  console.log('Elasticsearch enabled:', ES_HOST);
+} else {
+  console.log('Elasticsearch disabled - running in-memory only');
+}
 
 const mqttClient = mqtt.connect(`mqtt://${MQTT_BROKER}:${MQTT_PORT}`);
-const esClient = new Client({ node: `http://${ES_HOST}` });
 
 const INDEX_NAME = 'can-frames';
 let frameBuffer = [];
@@ -31,7 +42,13 @@ let bufferSize = 0;
 const MAX_BUFFER = 50;
 const FLUSH_INTERVAL = 1000;
 
+// In-memory storage when ES is disabled
+let inMemoryFrames = [];
+const MAX_MEMORY_FRAMES = 10000;
+
 async function initElasticsearch() {
+  if (!esEnabled) return;
+  
   try {
     const exists = await esClient.indices.exists({ index: INDEX_NAME });
     if (!exists) {
@@ -56,22 +73,25 @@ async function initElasticsearch() {
     }
   } catch (err) {
     console.error('Elasticsearch init error:', err.message);
+    esEnabled = false;
   }
 }
 
 async function flushBuffer() {
   if (frameBuffer.length === 0) return;
   
-  const body = frameBuffer.flatMap(doc => [
-    { index: { _index: INDEX_NAME } },
-    doc
-  ]);
-  
-  try {
-    await esClient.bulk({ body, refresh: false });
-    console.log(`Flushed ${frameBuffer.length} frames to ES`);
-  } catch (err) {
-    console.error('Bulk insert error:', err.message);
+  if (esEnabled && esClient) {
+    const body = frameBuffer.flatMap(doc => [
+      { index: { _index: INDEX_NAME } },
+      doc
+    ]);
+    
+    try {
+      await esClient.bulk({ body, refresh: false });
+      console.log(`Flushed ${frameBuffer.length} frames to ES`);
+    } catch (err) {
+      console.error('Bulk insert error:', err.message);
+    }
   }
   
   frameBuffer = [];
@@ -82,9 +102,14 @@ setInterval(flushBuffer, FLUSH_INTERVAL);
 
 mqttClient.on('connect', () => {
   console.log('MQTT connected to', MQTT_BROKER);
-  mqttClient.subscribe('can/frames', (err) => {
-    if (err) console.error('MQTT subscribe error:', err);
-    else console.log('Subscribed to can/frames');
+  
+  // FIXED: Subscribe to the correct topic that your phone gateway uses
+  mqttClient.subscribe('vehicule/can', (err) => {
+    if (err) {
+      console.error('MQTT subscribe error:', err);
+    } else {
+      console.log('✓ Subscribed to vehicule/can');
+    }
   });
 });
 
@@ -92,14 +117,25 @@ mqttClient.on('message', async (topic, message) => {
   try {
     const frame = JSON.parse(message.toString());
     
+    console.log('📡 Received frame:', frame);
+    
     // Add timestamp if not present
     const doc = {
       ...frame,
       timestamp: frame.timestamp || new Date().toISOString()
     };
     
+    // Store in buffer for ES
     frameBuffer.push(doc);
     bufferSize++;
+    
+    // Store in memory if ES disabled
+    if (!esEnabled) {
+      inMemoryFrames.unshift(doc);
+      if (inMemoryFrames.length > MAX_MEMORY_FRAMES) {
+        inMemoryFrames = inMemoryFrames.slice(0, MAX_MEMORY_FRAMES);
+      }
+    }
     
     if (bufferSize >= MAX_BUFFER) {
       await flushBuffer();
@@ -119,13 +155,26 @@ mqttClient.on('error', (err) => {
 app.get('/health', (req, res) => {
   res.json({
     mqtt: mqttClient.connected,
-    elasticsearch: true,
+    elasticsearch: esEnabled,
+    inMemoryFrames: inMemoryFrames.length,
     timestamp: new Date().toISOString()
   });
 });
 
 app.get('/api/frames', async (req, res) => {
   try {
+    if (!esEnabled) {
+      // Return from in-memory storage
+      const { size = 1000, car, canId } = req.query;
+      let filtered = inMemoryFrames;
+      
+      if (car) filtered = filtered.filter(f => f.car === parseInt(car));
+      if (canId) filtered = filtered.filter(f => f.canId === canId);
+      
+      res.json(filtered.slice(0, parseInt(size)));
+      return;
+    }
+    
     const { from = 'now-1h', size = 1000, car, canId } = req.query;
     
     const must = [
@@ -153,6 +202,41 @@ app.get('/api/frames', async (req, res) => {
 
 app.get('/api/stats', async (req, res) => {
   try {
+    if (!esEnabled) {
+      // Calculate stats from in-memory data
+      const carCounts = {};
+      const canIdCounts = {};
+      let totalSpeed = 0, totalTemp = 0, totalFuel = 0, count = 0;
+      
+      inMemoryFrames.forEach(f => {
+        carCounts[f.car] = (carCounts[f.car] || 0) + 1;
+        canIdCounts[f.canId] = (canIdCounts[f.canId] || 0) + 1;
+        if (f.speed) { totalSpeed += f.speed; count++; }
+        if (f.temp) totalTemp += f.temp;
+        if (f.fuel) totalFuel += f.fuel;
+      });
+      
+      res.json({
+        by_car: {
+          buckets: Object.entries(carCounts).map(([key, doc_count]) => ({
+            key: parseInt(key),
+            doc_count
+          }))
+        },
+        by_canId: {
+          buckets: Object.entries(canIdCounts).map(([key, doc_count]) => ({
+            key,
+            doc_count
+          }))
+        },
+        total_frames: { value: inMemoryFrames.length },
+        avg_speed: { value: count > 0 ? totalSpeed / count : 0 },
+        avg_temp: { value: count > 0 ? totalTemp / count : 0 },
+        avg_fuel: { value: count > 0 ? totalFuel / count : 0 }
+      });
+      return;
+    }
+    
     const result = await esClient.search({
       index: INDEX_NAME,
       body: {
@@ -175,12 +259,6 @@ app.get('/api/stats', async (req, res) => {
           },
           avg_fuel: {
             avg: { field: 'fuel' }
-          },
-          time_histogram: {
-            date_histogram: {
-              field: 'timestamp',
-              fixed_interval: '1m'
-            }
           }
         }
       }
@@ -195,6 +273,12 @@ app.get('/api/stats', async (req, res) => {
 
 app.delete('/api/frames', async (req, res) => {
   try {
+    if (!esEnabled) {
+      inMemoryFrames = [];
+      res.json({ deleted: true });
+      return;
+    }
+    
     await esClient.deleteByQuery({
       index: INDEX_NAME,
       body: {
@@ -221,7 +305,8 @@ app.post('/api/simulate', (req, res) => {
     timestamp: new Date().toISOString()
   };
   
-  mqttClient.publish('can/frames', JSON.stringify(frame));
+  // Publish to the correct topic
+  mqttClient.publish('vehicule/can', JSON.stringify(frame));
   res.json({ sent: frame });
 });
 
@@ -243,6 +328,8 @@ process.on('SIGTERM', async () => {
 initElasticsearch().then(() => {
   server.listen(5000, '0.0.0.0', () => {
     console.log('Backend running on 0.0.0.0:5000');
+    console.log('MQTT Broker:', MQTT_BROKER);
+    console.log('Elasticsearch:', esEnabled ? 'enabled' : 'disabled (in-memory mode)');
   });
 }).catch(err => {
   console.error('Startup error:', err);
