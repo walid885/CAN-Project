@@ -1,134 +1,133 @@
 #!/bin/bash
-set -e
-
-echo "======================================"
-echo "  CAN Bus Monitor - System Launcher"
-echo "======================================"
-echo ""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Check prerequisites
-echo "Checking prerequisites..."
-command -v docker >/dev/null 2>&1 || { echo -e "${RED}Docker not found${NC}"; exit 1; }
-command -v node >/dev/null 2>&1 || { echo -e "${RED}Node.js not found${NC}"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo -e "${RED}Python3 not found${NC}"; exit 1; }
-echo -e "${GREEN}✓ All prerequisites met${NC}"
+print_header() {
+    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}  ${GREEN}CAN Bus Monitoring System${NC}         ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
+}
+
+launch_terminal() {
+    local title=$1
+    local color=$2
+    local command=$3
+    
+    gnome-terminal --title="$title" -- bash -c "
+        echo -e '${color}═══════════════════════════════════════${NC}';
+        echo -e '${color}  $title${NC}';
+        echo -e '${color}═══════════════════════════════════════${NC}';
+        echo '';
+        $command;
+        exec bash
+    " &
+}
+
+clear
+print_header
 echo ""
 
-# Clean up any existing processes
-echo "Cleaning up existing processes..."
-if [ -f .pids ]; then
-    read -r p1 p2 p3 p4 < .pids
-    kill $p1 $p2 $p3 $p4 2>/dev/null || true
-    rm -f .pids
-fi
+TARGET_IP="192.168.43.250"
+INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+CURRENT_IP=$(ip -4 addr show $INTERFACE | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 
-# Kill processes on required ports
-lsof -ti:5000 | xargs kill -9 2>/dev/null || true
-lsof -ti:5173 | xargs kill -9 2>/dev/null || true
-echo -e "${GREEN}✓ Ports cleaned${NC}"
-echo ""
-
-# Install dependencies
-if [ ! -d "backend/node_modules" ]; then
-    echo "Installing backend dependencies..."
-    cd backend && npm install && cd ..
-fi
-
-if [ ! -d "frontend/node_modules" ]; then
-    echo "Installing frontend dependencies..."
-    cd frontend && npm install && cd ..
-fi
-
-echo -e "${GREEN}✓ Dependencies installed${NC}"
-echo ""
-
-# Start Docker services
-echo "Starting Docker services..."
-docker compose down 2>/dev/null
-docker compose up -d
-
-echo "Waiting for services to be healthy..."
-sleep 20
-
-# Check Elasticsearch
-until curl -s http://localhost:9200/_cluster/health >/dev/null 2>&1; do
-    echo "Waiting for Elasticsearch..."
-    sleep 2
-done
-echo -e "${GREEN}✓ Elasticsearch ready${NC}"
-
-# Check MQTT
-until timeout 2 bash -c "</dev/tcp/localhost/1884" 2>/dev/null; do
-    echo "Waiting for MQTT..."
-    sleep 2
-done
-echo -e "${GREEN}✓ MQTT ready${NC}"
-
-
-# Start backend
-echo ""
-echo "Starting backend..."
-cd backend
-npm start > ../logs_backend.log 2>&1 &
-BACKEND_PID=$!
-cd ..
-sleep 5
-
-# Verify backend is running
-if ! curl -s http://localhost:5000/api/stats >/dev/null 2>&1; then
-    echo -e "${RED}✗ Backend failed to start${NC}"
-    cat logs_backend.log
-    kill $PID1 $PID2 $BACKEND_PID 2>/dev/null
-    docker compose down
+# Step 1: Network Check
+echo -e "${YELLOW}[1/7]${NC} Checking Network Configuration..."
+if [[ "$CURRENT_IP" == "$TARGET_IP" ]]; then
+    echo -e "      ${GREEN}✓${NC} Interface $INTERFACE: $CURRENT_IP"
+else
+    echo -e "      ${RED}⚠ ERROR: IP Mismatch!${NC}"
+    echo -e "      Current: $CURRENT_IP | Required: $TARGET_IP"
+    echo -e "      ${YELLOW}Set Wi-Fi to Manual -> 192.168.43.250${NC}"
     exit 1
 fi
-echo -e "${GREEN}✓ Backend started (PID: $BACKEND_PID)${NC}"
 
-# Start frontend
-echo ""
-echo "Starting frontend..."
-cd frontend
-npm run dev > ../logs_frontend.log 2>&1 &
-FRONTEND_PID=$!
-cd ..
-sleep 3
-echo -e "${GREEN}✓ Frontend started (PID: $FRONTEND_PID)${NC}"
+# Step 2: Docker Elasticsearch
+echo -e "${YELLOW}[2/7]${NC} Starting Elasticsearch & Grafana..."
+docker-compose up -d
+echo -e "      ${GREEN}✓${NC} Waiting for Elasticsearch..."
+sleep 10
+
+# Step 3: Configure Mosquitto
+echo -e "${YELLOW}[3/7]${NC} Configuring Mosquitto..."
+pkill mosquitto 2>/dev/null
+rm -rf mosquitto_local
+mkdir -p mosquitto_local/config
+
+cat > mosquitto_local/config/mosquitto.conf << 'CONF'
+listener 1883 0.0.0.0
+allow_anonymous true
+max_connections -1
+CONF
+
+mosquitto -c mosquitto_local/config/mosquitto.conf -d
+sleep 2
+echo -e "      ${GREEN}✓${NC} Mosquitto listening on 0.0.0.0:1883"
+
+# Step 4: Firewall
+echo -e "${YELLOW}[4/7]${NC} Configuring Firewall..."
+if command -v ufw >/dev/null; then
+    sudo ufw allow 1883/tcp >/dev/null 2>&1
+    echo -e "      ${GREEN}✓${NC} Firewall configured"
+else
+    echo -e "      ${YELLOW}⚠${NC} UFW not found"
+fi
+
+# Step 5: MQTT Monitor
+echo -e "${YELLOW}[5/7]${NC} Launching MQTT Monitor..."
+launch_terminal "📡 MQTT Monitor" "$CYAN" "
+    echo 'Listening: $TARGET_IP:1883';
+    echo 'Topic: vehicule/can';
+    echo '';
+    mosquitto_sub -h $TARGET_IP -p 1883 -t 'vehicule/can' -v | while read -r line; do
+        echo \"\$(date '+%H:%M:%S') \$line\"
+    done
+"
+sleep 1
+echo -e "      ${GREEN}✓${NC} Monitor started"
+
+# Step 6: Backend
+echo -e "${YELLOW}[6/7]${NC} Launching Backend..."
+launch_terminal "🔧 CAN Backend" "$BLUE" "
+    cd backend
+    MQTT_BROKER=$TARGET_IP MQTT_PORT=1883 ES_HOST=localhost:9200 node server.js
+"
+sleep 2
+echo -e "      ${GREEN}✓${NC} Backend started"
+
+# Step 7: Frontend
+echo -e "${YELLOW}[7/7]${NC} Launching Frontend..."
+launch_terminal "🎨 CAN Frontend" "$PURPLE" "
+    cd frontend
+    npm run dev
+"
+sleep 2
+echo -e "      ${GREEN}✓${NC} Frontend started"
 
 echo ""
-echo "======================================"
-echo "  System Running Successfully!"
-echo "======================================"
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║          System Ready!                 ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${YELLOW}Access Points:${NC}"
-echo "  Frontend:      http://localhost:5173"
-echo "  Backend API:   http://localhost:5000"
-echo "  Grafana:       http://localhost:3001 (admin/admin)"
-echo "  Elasticsearch: http://localhost:9200"
+echo -e "${CYAN}Services:${NC}"
+echo -e "  Frontend:       ${GREEN}http://localhost:5173${NC}"
+echo -e "  Backend:        ${GREEN}http://localhost:5000${NC}"
+echo -e "  Elasticsearch:  ${GREEN}http://localhost:9200${NC}"
+echo -e "  Grafana:        ${GREEN}http://localhost:3001${NC} (admin/admin)"
 echo ""
-echo -e "${YELLOW}Process IDs:${NC}"
-echo "  Node 1:   $PID1"
-echo "  Node 2:   $PID2"
-echo "  Backend:  $BACKEND_PID"
-echo "  Frontend: $FRONTEND_PID"
+echo -e "${CYAN}Network:${NC}"
+echo -e "  IP:             ${GREEN}$CURRENT_IP${NC}"
+echo -e "  MQTT:           ${GREEN}$TARGET_IP:1883${NC}"
+echo -e "  Topic:          ${GREEN}vehicule/can${NC}"
 echo ""
-echo -e "${YELLOW}Logs:${NC}"
-echo "  tail -f logs_node1.log"
-echo "  tail -f logs_backend.log"
-echo "  tail -f logs_frontend.log"
+echo -e "${YELLOW}Test command:${NC}"
+echo -e "  mosquitto_pub -h $TARGET_IP -t 'vehicule/can' -m '{\"id\":999,\"car\":1,\"canId\":\"0x123\",\"speed\":120,\"temp\":80,\"fuel\":60,\"pressure\":240}'"
 echo ""
-echo "Press Ctrl+C to stop all services"
+echo -e "${RED}Press Ctrl+C to exit${NC}"
 echo ""
-
-# Save PIDs
-echo "$PID1 $PID2 $BACKEND_PID $FRONTEND_PID" > .pids
-
-# Trap exit
-trap "echo ''; echo 'Stopping all services...'; kill $PID1 $PID2 $BACKEND_PID $FRONTEND_PID 2>/dev/null; docker compose down; rm -f .pids; echo 'All services stopped'; exit 0" EXIT INT TERM
-
-# Keep script running
-tail -f logs_frontend.log
