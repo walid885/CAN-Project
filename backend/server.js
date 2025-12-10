@@ -40,10 +40,13 @@ async function initElasticsearch() {
         body: {
           mappings: {
             properties: {
-              node_id: { type: 'integer' },
-              can_id: { type: 'keyword' },
-              data: { type: 'integer' },
-              dlc: { type: 'integer' },
+              id: { type: 'long' },
+              car: { type: 'integer' },
+              canId: { type: 'keyword' },
+              speed: { type: 'integer' },
+              temp: { type: 'integer' },
+              fuel: { type: 'integer' },
+              pressure: { type: 'integer' },
               timestamp: { type: 'date' }
             }
           }
@@ -89,9 +92,10 @@ mqttClient.on('message', async (topic, message) => {
   try {
     const frame = JSON.parse(message.toString());
     
+    // Add timestamp if not present
     const doc = {
       ...frame,
-      timestamp: new Date(frame.timestamp * 1000)
+      timestamp: frame.timestamp || new Date().toISOString()
     };
     
     frameBuffer.push(doc);
@@ -101,7 +105,8 @@ mqttClient.on('message', async (topic, message) => {
       await flushBuffer();
     }
     
-    io.emit('can_frame', frame);
+    // Emit to WebSocket clients
+    io.emit('can_frame', doc);
   } catch (err) {
     console.error('Message processing error:', err.message);
   }
@@ -121,14 +126,14 @@ app.get('/health', (req, res) => {
 
 app.get('/api/frames', async (req, res) => {
   try {
-    const { from = 'now-1h', size = 1000, node_id, can_id } = req.query;
+    const { from = 'now-1h', size = 1000, car, canId } = req.query;
     
     const must = [
       { range: { timestamp: { gte: from } } }
     ];
     
-    if (node_id) must.push({ term: { node_id: parseInt(node_id) } });
-    if (can_id) must.push({ term: { can_id } });
+    if (car) must.push({ term: { car: parseInt(car) } });
+    if (canId) must.push({ term: { canId } });
     
     const result = await esClient.search({
       index: INDEX_NAME,
@@ -153,14 +158,23 @@ app.get('/api/stats', async (req, res) => {
       body: {
         size: 0,
         aggs: {
-          by_node: {
-            terms: { field: 'node_id', size: 10 }
+          by_car: {
+            terms: { field: 'car', size: 10 }
           },
-          by_can_id: {
-            terms: { field: 'can_id', size: 20 }
+          by_canId: {
+            terms: { field: 'canId', size: 20 }
           },
           total_frames: {
             value_count: { field: 'timestamp' }
+          },
+          avg_speed: {
+            avg: { field: 'speed' }
+          },
+          avg_temp: {
+            avg: { field: 'temp' }
+          },
+          avg_fuel: {
+            avg: { field: 'fuel' }
           },
           time_histogram: {
             date_histogram: {
@@ -194,14 +208,17 @@ app.delete('/api/frames', async (req, res) => {
 });
 
 app.post('/api/simulate', (req, res) => {
-  const { node_id = 1, can_id = '0x100', data = [0xAA, 0xBB], dlc = 2 } = req.body;
+  const { car = 1, canId = '0x123', speed = 85, temp = 70, fuel = 45, pressure = 220 } = req.body;
   
   const frame = {
-    node_id,
-    can_id,
-    data,
-    dlc,
-    timestamp: Date.now() / 1000
+    id: Date.now(),
+    car,
+    canId,
+    speed,
+    temp,
+    fuel,
+    pressure,
+    timestamp: new Date().toISOString()
   };
   
   mqttClient.publish('can/frames', JSON.stringify(frame));

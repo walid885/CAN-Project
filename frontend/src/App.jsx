@@ -1,4 +1,3 @@
-// frontend/src/App.jsx
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
@@ -8,49 +7,32 @@ const socket = io(BACKEND_URL);
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
 
-const decodeSignal = (canId, data) => {
-  const decoders = {
-    '0x100': { name: 'Engine Speed', value: (data[0] << 8 | data[1]) * 0.25, unit: 'RPM' },
-    '0x200': { name: 'Vehicle Speed', value: data[0], unit: 'km/h' },
-    '0x300': { name: 'Engine Temp', value: data[0] - 40, unit: '°C' },
-    '0x400': { name: 'Fuel Level', value: (data[0] / 255 * 100).toFixed(1), unit: '%' },
-    '0x500': { name: 'Battery Voltage', value: (data[0] * 0.1).toFixed(2), unit: 'V' }
-  };
-  return decoders[canId] || { name: 'Unknown', value: data[0], unit: 'raw' };
-};
-
 export default function App() {
   const [frames, setFrames] = useState([]);
-  const [stats, setStats] = useState({ by_node: { buckets: [] }, by_can_id: { buckets: [] } });
+  const [stats, setStats] = useState({ by_car: { buckets: [] }, by_canId: { buckets: [] } });
   const [signalData, setSignalData] = useState({
-    rpm: [],
     speed: [],
     temp: [],
     fuel: [],
-    voltage: []
+    pressure: []
   });
   const [connected, setConnected] = useState(false);
-  const [filter, setFilter] = useState({ nodeId: 'all', canId: 'all' });
+  const [filter, setFilter] = useState({ car: 'all', canId: 'all' });
   const [frameRate, setFrameRate] = useState(0);
   const [showSendModal, setShowSendModal] = useState(false);
   const [customFrame, setCustomFrame] = useState({ 
-    node_id: '1', 
-    can_id: '0x100', 
-    byte0: '00',
-    byte1: '00', 
-    byte2: '00', 
-    byte3: '00',
-    byte4: '00',
-    byte5: '00',
-    byte6: '00',
-    byte7: '00'
+    car: '1', 
+    canId: '0x123',
+    speed: '85',
+    temp: '70',
+    fuel: '45',
+    pressure: '220'
   });
   const [visibleSignals, setVisibleSignals] = useState({
-    rpm: true,
     speed: true,
     temp: true,
     fuel: true,
-    voltage: true
+    pressure: true
   });
   const frameCountRef = useRef(0);
 
@@ -62,24 +44,16 @@ export default function App() {
       frameCountRef.current++;
       setFrames(prev => [frame, ...prev.slice(0, 499)]);
       
-      const decoded = decodeSignal(frame.can_id, frame.data);
-      const timestamp = new Date(frame.timestamp * 1000).toLocaleTimeString();
+      const timestamp = new Date(frame.timestamp).toLocaleTimeString();
       
       setSignalData(prev => {
         const newData = { ...prev };
         const maxPoints = 100;
         
-        if (frame.can_id === '0x100') {
-          newData.rpm = [...prev.rpm.slice(-maxPoints), { time: timestamp, value: parseFloat(decoded.value) }];
-        } else if (frame.can_id === '0x200') {
-          newData.speed = [...prev.speed.slice(-maxPoints), { time: timestamp, value: parseFloat(decoded.value) }];
-        } else if (frame.can_id === '0x300') {
-          newData.temp = [...prev.temp.slice(-maxPoints), { time: timestamp, value: parseFloat(decoded.value) }];
-        } else if (frame.can_id === '0x400') {
-          newData.fuel = [...prev.fuel.slice(-maxPoints), { time: timestamp, value: parseFloat(decoded.value) }];
-        } else if (frame.can_id === '0x500') {
-          newData.voltage = [...prev.voltage.slice(-maxPoints), { time: timestamp, value: parseFloat(decoded.value) }];
-        }
+        newData.speed = [...prev.speed.slice(-maxPoints), { time: timestamp, value: frame.speed }];
+        newData.temp = [...prev.temp.slice(-maxPoints), { time: timestamp, value: frame.temp }];
+        newData.fuel = [...prev.fuel.slice(-maxPoints), { time: timestamp, value: frame.fuel }];
+        newData.pressure = [...prev.pressure.slice(-maxPoints), { time: timestamp, value: frame.pressure }];
         
         return newData;
       });
@@ -107,19 +81,16 @@ export default function App() {
   }, []);
 
   const sendFrame = () => {
-    const dataArray = [
-      customFrame.byte0, customFrame.byte1, customFrame.byte2, customFrame.byte3,
-      customFrame.byte4, customFrame.byte5, customFrame.byte6, customFrame.byte7
-    ].map(b => parseInt(b, 16));
-    
     fetch(`${BACKEND_URL}/api/simulate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        node_id: parseInt(customFrame.node_id),
-        can_id: customFrame.can_id,
-        data: dataArray,
-        dlc: 8
+        car: parseInt(customFrame.car),
+        canId: customFrame.canId,
+        speed: parseInt(customFrame.speed),
+        temp: parseInt(customFrame.temp),
+        fuel: parseInt(customFrame.fuel),
+        pressure: parseInt(customFrame.pressure)
       })
     }).then(() => {
       setShowSendModal(false);
@@ -128,8 +99,8 @@ export default function App() {
   };
 
   const saveFrames = () => {
-    const csv = ['Node,CAN ID,DLC,Data,Timestamp',
-      ...frames.map(f => `${f.node_id},${f.can_id},${f.dlc},${f.data.join(' ')},${f.timestamp}`)
+    const csv = ['ID,Car,CAN ID,Speed,Temp,Fuel,Pressure,Timestamp',
+      ...frames.map(f => `${f.id},${f.car},${f.canId},${f.speed},${f.temp},${f.fuel},${f.pressure},${f.timestamp}`)
     ].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -141,31 +112,30 @@ export default function App() {
 
   const mergeSignalData = () => {
     const allTimes = [...new Set([
-      ...signalData.rpm.map(d => d.time),
       ...signalData.speed.map(d => d.time),
       ...signalData.temp.map(d => d.time),
       ...signalData.fuel.map(d => d.time),
-      ...signalData.voltage.map(d => d.time)
+      ...signalData.pressure.map(d => d.time)
     ])].slice(-100);
     
     return allTimes.map(time => ({
       time,
-      rpm: signalData.rpm.find(d => d.time === time)?.value || null,
       speed: signalData.speed.find(d => d.time === time)?.value || null,
       temp: signalData.temp.find(d => d.time === time)?.value || null,
       fuel: signalData.fuel.find(d => d.time === time)?.value || null,
-      voltage: signalData.voltage.find(d => d.time === time)?.value || null
+      pressure: signalData.pressure.find(d => d.time === time)?.value || null
     }));
   };
 
   const filteredFrames = frames.filter(f => {
-    if (filter.nodeId !== 'all' && f.node_id !== parseInt(filter.nodeId)) return false;
-    if (filter.canId !== 'all' && f.can_id !== filter.canId) return false;
+    if (filter.car !== 'all' && f.car !== parseInt(filter.car)) return false;
+    if (filter.canId !== 'all' && f.canId !== filter.canId) return false;
     return true;
   });
-
-  const uniqueCanIds = [...new Set(frames.map(f => f.can_id))];
-  const canIdPieData = stats.by_can_id.buckets?.map(b => ({
+  
+  const uniqueCanIds = [...new Set(frames.map(f => f.canId))];
+  
+  const canIdPieData = stats?.by_canId?.buckets?.map(b => ({
     name: b.key,
     value: b.doc_count
   })) || [];
@@ -209,20 +179,19 @@ export default function App() {
       }}>
         <StatCard title="Total Frames" value={frames.length} color="#3b82f6" icon="📊" />
         <StatCard 
-  title="Node 1" 
-  value={stats?.by_node?.buckets?.find(b => b.key === 1)?.doc_count || 0}
-  color="#8b5cf6"
-  icon="🔵"
-  pulse
-/>
-
-<StatCard 
-  title="Node 2" 
-  value={stats?.by_node?.buckets?.find(b => b.key === 2)?.doc_count || 0}
-  color="#ec4899"
-  icon="🟣"
-  pulse
-/>
+          title="Car 1 (0x123)" 
+          value={stats?.by_car?.buckets?.find(b => b.key === 1)?.doc_count || 0}
+          color="#8b5cf6"
+          icon="🚗"
+          pulse
+        />
+        <StatCard 
+          title="Car 2 (0x456)" 
+          value={stats?.by_car?.buckets?.find(b => b.key === 2)?.doc_count || 0}
+          color="#ec4899"
+          icon="🚙"
+          pulse
+        />
         <StatCard title="Frame Rate" value={`${frameRate} Hz`} color="#f59e0b" icon="⚡" />
       </div>
 
@@ -251,7 +220,7 @@ export default function App() {
                 style={{ cursor: 'pointer' }}
               />
               <span style={{ fontSize: 14, color: '#1e293b', fontWeight: 500, textTransform: 'capitalize' }}>
-                {key === 'rpm' ? 'Engine RPM' : key === 'speed' ? 'Vehicle Speed' : key === 'temp' ? 'Temperature' : key === 'fuel' ? 'Fuel Level' : 'Battery Voltage'}
+                {key === 'speed' ? 'Speed (km/h)' : key === 'temp' ? 'Temperature (°C)' : key === 'fuel' ? 'Fuel (%)' : 'Pressure (kPa)'}
               </span>
             </label>
           ))}
@@ -264,11 +233,10 @@ export default function App() {
             <YAxis stroke="#64748b" />
             <Tooltip contentStyle={{ background: 'white', border: '1px solid #e2e8f0' }} />
             <Legend />
-            {visibleSignals.rpm && <Line type="monotone" dataKey="rpm" stroke="#3b82f6" strokeWidth={2} dot={false} name="RPM" />}
-            {visibleSignals.speed && <Line type="monotone" dataKey="speed" stroke="#8b5cf6" strokeWidth={2} dot={false} name="Speed (km/h)" />}
+            {visibleSignals.speed && <Line type="monotone" dataKey="speed" stroke="#3b82f6" strokeWidth={2} dot={false} name="Speed (km/h)" />}
             {visibleSignals.temp && <Line type="monotone" dataKey="temp" stroke="#ec4899" strokeWidth={2} dot={false} name="Temp (°C)" />}
             {visibleSignals.fuel && <Line type="monotone" dataKey="fuel" stroke="#f59e0b" strokeWidth={2} dot={false} name="Fuel (%)" />}
-            {visibleSignals.voltage && <Line type="monotone" dataKey="voltage" stroke="#10b981" strokeWidth={2} dot={false} name="Voltage (V)" />}
+            {visibleSignals.pressure && <Line type="monotone" dataKey="pressure" stroke="#10b981" strokeWidth={2} dot={false} name="Pressure (kPa)" />}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -299,13 +267,13 @@ export default function App() {
         <div style={cardStyle}>
           <h3 style={titleStyle}>CAN ID Frequency</h3>
           <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={stats?.by_can_id?.buckets || []}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <BarChart data={stats?.by_canId?.buckets || []}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="key" stroke="#64748b" />
               <YAxis stroke="#64748b" />
               <Tooltip contentStyle={{ background: 'white', border: '1px solid #e2e8f0' }} />
               <Bar dataKey="doc_count" fill="#3b82f6">
-                {(stats.by_can_id.buckets || []).map((entry, index) => (
+                {(stats?.by_canId?.buckets || []).map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Bar>
@@ -317,13 +285,13 @@ export default function App() {
       <div style={{ ...cardStyle, marginBottom: 20 }}>
         <div style={{ display: 'flex', gap: 15, alignItems: 'center', flexWrap: 'wrap', marginBottom: 15 }}>
           <select 
-            value={filter.nodeId}
-            onChange={e => setFilter(f => ({ ...f, nodeId: e.target.value }))}
+            value={filter.car}
+            onChange={e => setFilter(f => ({ ...f, car: e.target.value }))}
             style={selectStyle}
           >
-            <option value="all">All Nodes</option>
-            <option value="1">Node 1</option>
-            <option value="2">Node 2</option>
+            <option value="all">All Cars</option>
+            <option value="1">Car 1 (0x123)</option>
+            <option value="2">Car 2 (0x456)</option>
           </select>
           
           <select 
@@ -335,7 +303,7 @@ export default function App() {
             {uniqueCanIds.map(id => <option key={id} value={id}>{id}</option>)}
           </select>
 
-          <button onClick={() => setFilter({ nodeId: 'all', canId: 'all' })} style={buttonStyle('#64748b')}>
+          <button onClick={() => setFilter({ car: 'all', canId: 'all' })} style={buttonStyle('#64748b')}>
             Reset
           </button>
           
@@ -348,47 +316,49 @@ export default function App() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9', zIndex: 10 }}>
               <tr>
-                <th style={thStyle}>Node</th>
+                <th style={thStyle}>ID</th>
+                <th style={thStyle}>Car</th>
                 <th style={thStyle}>CAN ID</th>
-                <th style={thStyle}>Signal</th>
-                <th style={thStyle}>Value</th>
-                <th style={thStyle}>DLC</th>
-                <th style={thStyle}>Raw Data</th>
+                <th style={thStyle}>Speed</th>
+                <th style={thStyle}>Temp</th>
+                <th style={thStyle}>Fuel</th>
+                <th style={thStyle}>Pressure</th>
                 <th style={thStyle}>Time</th>
               </tr>
             </thead>
             <tbody>
-              {filteredFrames.map((f, i) => {
-                const decoded = decodeSignal(f.can_id, f.data);
-                return (
-                  <tr key={i} style={{ 
-                    borderBottom: '1px solid #e2e8f0',
-                    background: i % 2 === 0 ? 'white' : '#f8fafc'
-                  }}>
-                    <td style={tdStyle}>
-                      <span style={{ 
-                        color: f.node_id === 1 ? '#8b5cf6' : '#ec4899',
-                        fontWeight: 600
-                      }}>
-                        ● Node {f.node_id}
-                      </span>
-                    </td>
-                    <td style={tdStyle}>{f.can_id}</td>
-                    <td style={{ ...tdStyle, fontWeight: 600 }}>{decoded.name}</td>
-                    <td style={{ ...tdStyle, color: '#3b82f6', fontWeight: 600 }}>
-                      {decoded.value} {decoded.unit}
-                    </td>
-                    <td style={tdStyle}>{f.dlc}</td>
-                    <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>
-                      {f.data.map(d => d.toString(16).toUpperCase().padStart(2, '0')).join(' ')}
-                    </td>
-                    <td style={{ ...tdStyle, fontSize: 11 }}>
-                      {new Date(f.timestamp * 1000).toLocaleTimeString()}.
-                      {Math.floor((f.timestamp % 1) * 1000).toString().padStart(3, '0')}
-                    </td>
-                  </tr>
-                );
-              })}
+              {filteredFrames.map((f, i) => (
+                <tr key={i} style={{ 
+                  borderBottom: '1px solid #e2e8f0',
+                  background: i % 2 === 0 ? 'white' : '#f8fafc'
+                }}>
+                  <td style={tdStyle}>{f.id}</td>
+                  <td style={tdStyle}>
+                    <span style={{ 
+                      color: f.car === 1 ? '#8b5cf6' : '#ec4899',
+                      fontWeight: 600
+                    }}>
+                      {f.car === 1 ? '🚗' : '🚙'} Car {f.car}
+                    </span>
+                  </td>
+                  <td style={tdStyle}>{f.canId}</td>
+                  <td style={{ ...tdStyle, color: '#3b82f6', fontWeight: 600 }}>
+                    {f.speed} km/h
+                  </td>
+                  <td style={{ ...tdStyle, color: '#ec4899', fontWeight: 600 }}>
+                    {f.temp} °C
+                  </td>
+                  <td style={{ ...tdStyle, color: '#f59e0b', fontWeight: 600 }}>
+                    {f.fuel} %
+                  </td>
+                  <td style={{ ...tdStyle, color: '#10b981', fontWeight: 600 }}>
+                    {f.pressure} kPa
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: 11 }}>
+                    {new Date(f.timestamp).toLocaleTimeString()}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -401,45 +371,67 @@ export default function App() {
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 15 }}>
               <div>
-                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Node ID</label>
+                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Car</label>
                 <select 
-                  value={customFrame.node_id}
-                  onChange={e => setCustomFrame({...customFrame, node_id: e.target.value})}
+                  value={customFrame.car}
+                  onChange={e => setCustomFrame({...customFrame, car: e.target.value})}
                   style={inputStyle}
                 >
-                  <option value="1">Node 1</option>
-                  <option value="2">Node 2</option>
+                  <option value="1">Car 1</option>
+                  <option value="2">Car 2</option>
                 </select>
               </div>
               
               <div>
                 <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>CAN ID</label>
                 <select 
-                  value={customFrame.can_id}
-                  onChange={e => setCustomFrame({...customFrame, can_id: e.target.value})}
+                  value={customFrame.canId}
+                  onChange={e => setCustomFrame({...customFrame, canId: e.target.value})}
                   style={inputStyle}
                 >
-                  <option value="0x100">0x100 - Engine Speed</option>
-                  <option value="0x200">0x200 - Vehicle Speed</option>
-                  <option value="0x300">0x300 - Engine Temp</option>
-                  <option value="0x400">0x400 - Fuel Level</option>
-                  <option value="0x500">0x500 - Battery Voltage</option>
+                  <option value="0x123">0x123 - Car 1</option>
+                  <option value="0x456">0x456 - Car 2</option>
                 </select>
               </div>
             </div>
 
-            <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Data Bytes (Hex)</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 5, marginBottom: 15 }}>
-              {[0,1,2,3,4,5,6,7].map(i => (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 15 }}>
+              <div>
+                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Speed (km/h)</label>
                 <input 
-                  key={i}
-                  placeholder={`B${i}`}
-                  maxLength={2}
-                  value={customFrame[`byte${i}`]}
-                  onChange={e => setCustomFrame({...customFrame, [`byte${i}`]: e.target.value.toUpperCase()})}
-                  style={{ ...inputStyle, textAlign: 'center', fontFamily: 'monospace' }}
+                  type="number"
+                  value={customFrame.speed}
+                  onChange={e => setCustomFrame({...customFrame, speed: e.target.value})}
+                  style={inputStyle}
                 />
-              ))}
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Temperature (°C)</label>
+                <input 
+                  type="number"
+                  value={customFrame.temp}
+                  onChange={e => setCustomFrame({...customFrame, temp: e.target.value})}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Fuel (%)</label>
+                <input 
+                  type="number"
+                  value={customFrame.fuel}
+                  onChange={e => setCustomFrame({...customFrame, fuel: e.target.value})}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Pressure (kPa)</label>
+                <input 
+                  type="number"
+                  value={customFrame.pressure}
+                  onChange={e => setCustomFrame({...customFrame, pressure: e.target.value})}
+                  style={inputStyle}
+                />
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 10 }}>

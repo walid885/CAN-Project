@@ -1,0 +1,41 @@
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Starting at 1.0 Hz
+[Node 1] 55 frames
+[Node 1] 105 frames
+[Node 1] 155 frames
+[Node 1] 205 frames
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Disconnected
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] 235 frames
+[Node 1] 285 frames
+[Node 1] 335 frames
+[Node 1] 385 frames
+[Node 1] 435 frames
+[Node 1] 485 frames
+[Node 1] 535 frames
+[Node 1] 585 frames
+[Node 1] 635 frames
+[Node 1] 685 frames
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] 730 frames
+[Node 1] Disconnected
+[Node 1] Reconnecting...
+[Node 1] Connected to MQTT localhost:1884
+[Node 1] Stopping...

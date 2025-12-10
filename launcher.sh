@@ -1,6 +1,4 @@
 #!/bin/bash
-# launch.sh - Complete system launcher
-
 set -e
 
 echo "======================================"
@@ -8,7 +6,6 @@ echo "  CAN Bus Monitor - System Launcher"
 echo "======================================"
 echo ""
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -20,6 +17,20 @@ command -v docker >/dev/null 2>&1 || { echo -e "${RED}Docker not found${NC}"; ex
 command -v node >/dev/null 2>&1 || { echo -e "${RED}Node.js not found${NC}"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo -e "${RED}Python3 not found${NC}"; exit 1; }
 echo -e "${GREEN}✓ All prerequisites met${NC}"
+echo ""
+
+# Clean up any existing processes
+echo "Cleaning up existing processes..."
+if [ -f .pids ]; then
+    read -r p1 p2 p3 p4 < .pids
+    kill $p1 $p2 $p3 $p4 2>/dev/null || true
+    rm -f .pids
+fi
+
+# Kill processes on required ports
+lsof -ti:5000 | xargs kill -9 2>/dev/null || true
+lsof -ti:5173 | xargs kill -9 2>/dev/null || true
+echo -e "${GREEN}✓ Ports cleaned${NC}"
 echo ""
 
 # Install dependencies
@@ -51,15 +62,13 @@ until curl -s http://localhost:9200/_cluster/health >/dev/null 2>&1; do
 done
 echo -e "${GREEN}✓ Elasticsearch ready${NC}"
 
-# Start simulators
-echo ""
-echo "Starting STM32 simulators..."
-python3 stm32_can_simulator.py 1 localhost 1884 1 > logs_node1.log 2>&1 &
-PID1=$!
-python3 stm32_can_simulator.py 2 localhost 1884 1 > logs_node2.log 2>&1 &
-PID2=$!
-echo -e "${GREEN}✓ Node 1 started (PID: $PID1)${NC}"
-echo -e "${GREEN}✓ Node 2 started (PID: $PID2)${NC}"
+# Check MQTT
+until timeout 2 bash -c "</dev/tcp/localhost/1884" 2>/dev/null; do
+    echo "Waiting for MQTT..."
+    sleep 2
+done
+echo -e "${GREEN}✓ MQTT ready${NC}"
+
 
 # Start backend
 echo ""
@@ -68,7 +77,16 @@ cd backend
 npm start > ../logs_backend.log 2>&1 &
 BACKEND_PID=$!
 cd ..
-sleep 3
+sleep 5
+
+# Verify backend is running
+if ! curl -s http://localhost:5000/api/stats >/dev/null 2>&1; then
+    echo -e "${RED}✗ Backend failed to start${NC}"
+    cat logs_backend.log
+    kill $PID1 $PID2 $BACKEND_PID 2>/dev/null
+    docker compose down
+    exit 1
+fi
 echo -e "${GREEN}✓ Backend started (PID: $BACKEND_PID)${NC}"
 
 # Start frontend
@@ -99,10 +117,9 @@ echo "  Backend:  $BACKEND_PID"
 echo "  Frontend: $FRONTEND_PID"
 echo ""
 echo -e "${YELLOW}Logs:${NC}"
-echo "  Node 1:   logs_node1.log"
-echo "  Node 2:   logs_node2.log"
-echo "  Backend:  logs_backend.log"
-echo "  Frontend: logs_frontend.log"
+echo "  tail -f logs_node1.log"
+echo "  tail -f logs_backend.log"
+echo "  tail -f logs_frontend.log"
 echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""

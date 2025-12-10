@@ -6,7 +6,7 @@ services:
     image: eclipse-mosquitto:2
     container_name: can_mosquitto
     ports:
-      - "1884:1883"
+      - "1883:1883"
       - "9002:9001"
     volumes:
       - ./mosquitto/config:/mosquitto/config
