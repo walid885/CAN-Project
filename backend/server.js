@@ -305,6 +305,69 @@ app.post('/api/simulate', (req, res) => {
     timestamp: new Date().toISOString()
   };
   
+  // Get sum of frames by CAN ID
+app.get('/api/sum-by-id', async (req, res) => {
+  try {
+    if (!esEnabled) {
+      const sums = { '0x123': 0, '0x124': 0 };
+      inMemoryFrames.forEach(f => {
+        if (f.canId === '0x123' || f.canId === '0x124') {
+          sums[f.canId]++;
+        }
+      });
+      res.json(sums);
+      return;
+    }
+    
+    const result = await esClient.search({
+      index: INDEX_NAME,
+      body: {
+        size: 0,
+        query: {
+          terms: { canId: ['0x123', '0x456'] }
+        },
+        aggs: {
+          by_id: {
+            terms: { field: 'canId', size: 10 }
+          }
+        }
+      }
+    });
+    
+    const sums = { '0x123': 0, '0x456': 0 };
+    result.aggregations.by_id.buckets.forEach(b => {
+      sums[b.key] = b.doc_count;
+    });
+    
+    res.json(sums);
+  } catch (err) {
+    console.error('Sum error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get latest frame
+app.get('/api/latest', async (req, res) => {
+  try {
+    if (!esEnabled) {
+      res.json(inMemoryFrames[0] || null);
+      return;
+    }
+    
+    const result = await esClient.search({
+      index: INDEX_NAME,
+      body: {
+        size: 1,
+        sort: [{ timestamp: 'desc' }]
+      }
+    });
+    
+    res.json(result.hits.hits[0]?._source || null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
   // Publish to the correct topic
   mqttClient.publish('vehicule/can', JSON.stringify(frame));
   res.json({ sent: frame });

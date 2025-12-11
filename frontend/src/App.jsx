@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const BACKEND_URL = 'http://localhost:5000';
 const socket = io(BACKEND_URL);
-
-const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
 
 export default function App() {
   const [frames, setFrames] = useState([]);
@@ -18,7 +16,6 @@ export default function App() {
   });
   const [connected, setConnected] = useState(false);
   const [filter, setFilter] = useState({ car: 'all', canId: 'all' });
-  const [frameRate, setFrameRate] = useState(0);
   const [showSendModal, setShowSendModal] = useState(false);
   const [customFrame, setCustomFrame] = useState({ 
     car: '1', 
@@ -34,15 +31,23 @@ export default function App() {
     fuel: true,
     pressure: true
   });
-  const frameCountRef = useRef(0);
+  const [idSums, setIdSums] = useState({ '0x123': 0, '0x456': 0 });
+  const [latestFrame, setLatestFrame] = useState(null);
+  const [carStatus, setCarStatus] = useState({ 1: 'stopped', 2: 'stopped' });
 
   useEffect(() => {
     socket.on('connect', () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
     
     socket.on('can_frame', (frame) => {
-      frameCountRef.current++;
       setFrames(prev => [frame, ...prev.slice(0, 499)]);
+      setLatestFrame(frame);
+      
+      // Update car status
+      setCarStatus(prev => ({
+        ...prev,
+        [frame.car]: frame.speed > 0 ? 'moving' : 'stopped'
+      }));
       
       const timestamp = new Date(frame.timestamp).toLocaleTimeString();
       
@@ -64,19 +69,18 @@ export default function App() {
         .then(r => r.json())
         .then(setStats)
         .catch(console.error);
+      
+      fetch(`${BACKEND_URL}/api/sum-by-id`)
+        .then(r => r.json())
+        .then(setIdSums)
+        .catch(console.error);
     }, 5000);
-
-    const rateInterval = setInterval(() => {
-      setFrameRate(frameCountRef.current);
-      frameCountRef.current = 0;
-    }, 1000);
 
     return () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('can_frame');
       clearInterval(statsInterval);
-      clearInterval(rateInterval);
     };
   }, []);
 
@@ -94,7 +98,17 @@ export default function App() {
       })
     }).then(() => {
       setShowSendModal(false);
-      alert('Frame sent successfully!');
+      // Fetch latest frame after sending
+      setTimeout(() => {
+        fetch(`${BACKEND_URL}/api/latest`)
+          .then(r => r.json())
+          .then(frame => {
+            if (frame) {
+              setLatestFrame(frame);
+              alert(`Frame sent! Latest: Speed=${frame.speed}, Temp=${frame.temp}, Fuel=${frame.fuel}`);
+            }
+          });
+      }, 500);
     });
   };
 
@@ -134,12 +148,6 @@ export default function App() {
   });
   
   const uniqueCanIds = [...new Set(frames.map(f => f.canId))];
-  
-  const canIdPieData = stats?.by_canId?.buckets?.map(b => ({
-    name: b.key,
-    value: b.doc_count
-  })) || [];
-
   const chartData = mergeSignalData();
 
   return (
@@ -158,17 +166,14 @@ export default function App() {
           <h1 style={{ fontSize: 28, color: '#1e293b', marginBottom: 5 }}>CAN Bus Monitor</h1>
           <p style={{ color: '#64748b', fontSize: 14 }}>Real-time vehicle network analysis</p>
         </div>
-        <div style={{ display: 'flex', gap: 15, alignItems: 'center' }}>
-          <div style={{ 
-            background: connected ? '#10b981' : '#ef4444',
-            width: 12,
-            height: 12,
-            borderRadius: '50%',
-            boxShadow: `0 0 10px ${connected ? '#10b981' : '#ef4444'}`,
-            animation: connected ? 'pulse 2s infinite' : 'none'
-          }}/>
-          <span style={{ fontSize: 16, color: '#475569', fontWeight: 600 }}>{frameRate} fps</span>
-        </div>
+        <div style={{ 
+          background: connected ? '#10b981' : '#ef4444',
+          width: 12,
+          height: 12,
+          borderRadius: '50%',
+          boxShadow: `0 0 10px ${connected ? '#10b981' : '#ef4444'}`,
+          animation: connected ? 'pulse 2s infinite' : 'none'
+        }}/>
       </header>
 
       <div style={{ 
@@ -180,20 +185,46 @@ export default function App() {
         <StatCard title="Total Frames" value={frames.length} color="#3b82f6" icon="📊" />
         <StatCard 
           title="Car 1 (0x123)" 
-          value={stats?.by_car?.buckets?.find(b => b.key === 1)?.doc_count || 0}
+          value={idSums['0x123']}
           color="#8b5cf6"
           icon="🚗"
           pulse
         />
         <StatCard 
           title="Car 2 (0x456)" 
-          value={stats?.by_car?.buckets?.find(b => b.key === 2)?.doc_count || 0}
+          value={idSums['0x456']}
           color="#ec4899"
           icon="🚙"
           pulse
         />
-        <StatCard title="Frame Rate" value={`${frameRate} Hz`} color="#f59e0b" icon="⚡" />
+        <StatCard 
+          title="Car 1 Status" 
+          value={carStatus[1]} 
+          color={carStatus[1] === 'moving' ? '#10b981' : '#ef4444'}
+          icon={carStatus[1] === 'moving' ? '🏃' : '⏸️'}
+        />
+        <StatCard 
+          title="Car 2 Status" 
+          value={carStatus[2]} 
+          color={carStatus[2] === 'moving' ? '#10b981' : '#ef4444'}
+          icon={carStatus[2] === 'moving' ? '🏃' : '⏸️'}
+        />
       </div>
+
+      {latestFrame && (
+        <div style={{ ...cardStyle, marginBottom: 20, background: '#f0fdf4' }}>
+          <h3 style={titleStyle}>Latest Frame Received</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+            <div><strong>Car:</strong> {latestFrame.car}</div>
+            <div><strong>CAN ID:</strong> {latestFrame.canId}</div>
+            <div><strong>Speed:</strong> {latestFrame.speed} km/h</div>
+            <div><strong>Temp:</strong> {latestFrame.temp} °C</div>
+            <div><strong>Fuel:</strong> {latestFrame.fuel} %</div>
+            <div><strong>Pressure:</strong> {latestFrame.pressure} kPa</div>
+            <div><strong>Time:</strong> {new Date(latestFrame.timestamp).toLocaleTimeString()}</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
         <button onClick={() => setShowSendModal(true)} style={buttonStyle('#3b82f6')}>
@@ -239,47 +270,6 @@ export default function App() {
             {visibleSignals.pressure && <Line type="monotone" dataKey="pressure" stroke="#10b981" strokeWidth={2} dot={false} name="Pressure (kPa)" />}
           </LineChart>
         </ResponsiveContainer>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 20, marginBottom: 20 }}>
-        <div style={cardStyle}>
-          <h3 style={titleStyle}>CAN ID Distribution</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={canIdPieData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                outerRadius={80}
-                dataKey="value"
-              >
-                {canIdPieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div style={cardStyle}>
-          <h3 style={titleStyle}>CAN ID Frequency</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={stats?.by_canId?.buckets || []}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="key" stroke="#64748b" />
-              <YAxis stroke="#64748b" />
-              <Tooltip contentStyle={{ background: 'white', border: '1px solid #e2e8f0' }} />
-              <Bar dataKey="doc_count" fill="#3b82f6">
-                {(stats?.by_canId?.buckets || []).map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       <div style={{ ...cardStyle, marginBottom: 20 }}>
